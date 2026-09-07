@@ -28,6 +28,10 @@ type Repository interface {
 	ListEndpoints(ctx context.Context, tenantID *string) ([]*domain.WebhookEndpoint, error)
 	UpdateEndpoint(ctx context.Context, ep *domain.WebhookEndpoint) error
 	DeleteEndpoint(ctx context.Context, id string) error
+	CreateSubscription(ctx context.Context, sub *domain.WebhookSubscription) error
+	DeleteSubscription(ctx context.Context, id string) error
+	ListSubscriptions(ctx context.Context, tenantID *string) ([]*domain.WebhookSubscription, error)
+	GetSubscriptionsForEvent(ctx context.Context, tenantID *string, eventType string) ([]*domain.WebhookSubscription, error)
 	CreateDelivery(ctx context.Context, d *domain.WebhookDelivery) error
 	GetDelivery(ctx context.Context, id string) (*domain.WebhookDelivery, error)
 	UpdateDelivery(ctx context.Context, d *domain.WebhookDelivery) error
@@ -51,12 +55,13 @@ type Service interface {
 
 type service struct {
 	repo               Repository
-	rdb                *redis.Client
+	rdb                redis.UniversalClient
 	client             *http.Client
 	queueClient        *queue.Client
 	maxPerMinute       int
 	maxAttempts        int
 	backoffSchedule    []time.Time
+	allowPrivateNetworks bool
 }
 
 var DefaultBackoffSchedule = []time.Duration{
@@ -67,7 +72,7 @@ var DefaultBackoffSchedule = []time.Duration{
 	6 * time.Hour,
 }
 
-func NewService(repo Repository, rdb *redis.Client, queueClient *queue.Client, maxPerMinute int) Service {
+func NewService(repo Repository, rdb redis.UniversalClient, queueClient *queue.Client, maxPerMinute int) Service {
 	if maxPerMinute <= 0 {
 		maxPerMinute = 120
 	}

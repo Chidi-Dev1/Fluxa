@@ -12,17 +12,16 @@ import (
 	"time"
 
 	"github.com/fluxa/fluxa/internal/domain"
-	"github.com/fluxa/fluxa/internal/postgres"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
 
 type Dispatcher struct {
-	repo   *postgres.WebhookRepository
+	repo   Repository
 	client *http.Client
 }
 
-func NewDispatcher(repo *postgres.WebhookRepository) *Dispatcher {
+func NewDispatcher(repo Repository) *Dispatcher {
 	return &Dispatcher{
 		repo: repo,
 		client: &http.Client{
