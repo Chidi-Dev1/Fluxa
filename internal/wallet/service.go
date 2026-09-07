@@ -64,7 +64,7 @@ func (s *Service) GetWalletBalances(ctx context.Context, tenantID, walletID stri
 
 func (s *Service) fetchFreshBalances(ctx context.Context, publicKey string) ([]domain.Balance, error) {
 	if s.horizonClient == nil {
-		return []domain.Balance{},
+		return nil, nil
 	}
 	account, err := s.horizonClient.AccountDetail(horizonclient.AccountRequest{AccountID: publicKey})
 	if err != nil {

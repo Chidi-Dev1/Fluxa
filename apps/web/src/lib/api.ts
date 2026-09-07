@@ -1,3 +1,9 @@
+export interface Wallet {
+  id: string;
+  public_key: string;
+  created_at: string;
+}
+
 export interface WebhookEndpoint {
   id: string;
   url: string;
@@ -83,7 +89,7 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 export const api = {
   getHealth: () => request<HealthResponse>('/health'),
   getFeeSchedule: () => request<FeeSchedule>('/v1/fees'),
-  listWallets: () => request<{ wallets: any[] }>('/v1/wallets'),
+  listWallets: () => request<{ wallets: Wallet[] }>('/v1/wallets'),
   getWalletBalances: (id: string) => request<{ balances: WalletBalance[] }>(`/v1/wallets/${id}/balances`),
   listTransactions: (walletId: string, params: number | TransferListParams = 10) => {
     const query = typeof params === 'number' ? { limit: params } : params;

@@ -4,12 +4,20 @@ import (
 	"time"
 )
 
+// EventType is a string type for webhook event type constants.
+type EventType string
+
 const (
 	EventTypePaymentCompleted    = "payment.completed"
 	EventTypePaymentFailed       = "payment.failed"
 	EventTypeFxQuoteCreated      = "fx.quote.created"
 	EventTypeSettlementCompleted = "settlement.completed"
 	EventTypeBatchCompleted      = "batch.completed"
+
+	EventTransferComplianceHold      = "transfer.compliance.hold"
+	EventTransferComplianceApproved  = "transfer.compliance.approved"
+	EventTransferComplianceRejected  = "transfer.compliance.rejected"
+	EventSanctionsRefreshFailed      = "sanctions.refresh.failed"
 )
 
 var SupportedEventTypes = []string{
@@ -71,4 +79,13 @@ type WebhookDeadLetter struct {
 	ErrorMessage string    `json:"error_message"`
 	AttemptCount int       `json:"attempt_count"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type WebhookHealth struct {
+	EndpointID      string     `json:"endpoint_id"`
+	URL             string     `json:"url"`
+	SuccessCount    int        `json:"success_count"`
+	FailureCount    int        `json:"failure_count"`
+	LastDeliveredAt *time.Time `json:"last_delivered_at,omitempty"`
+	Failing         bool       `json:"failing"`
 }

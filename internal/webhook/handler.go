@@ -132,7 +132,7 @@ func (h *Handler) VerifySignature(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := Verify(req.Secret, req.Timestamp, req.Body, req.Signature)
-	api.JSON(w, http.StatusOK, result)
+	api.JSON(w, http.StatusOK, map[string]interface{}{"valid": result.Valid, "reason": result.Reason})
 }
 
 func (h *Handler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -179,38 +179,6 @@ func (h *Handler) DeleteSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func Verify(secret, timestamp, body, signature string) VerifyResult {
-	timestampSeconds, err := strconv.ParseInt(timestamp, 10, 64)
-	if err != nil {
-		return VerifyResult{Valid: false, Reason: "invalid_timestamp"}
-	}
-
-	now := time.Now().Unix()
-	delta := now - timestampSeconds
-	if delta < 0 {
-		delta = -delta
-	}
-	if delta >= 300 {
-		return VerifyResult{Valid: false, Reason: "stale_timestamp"}
-	}
-
-	signedPayload := timestamp + "." + body
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(signedPayload))
-	expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-
-	if !hmac.Equal([]byte(expected), []byte(signature)) {
-		return VerifyResult{Valid: false, Reason: "signature_mismatch"}
-	}
-
-	return VerifyResult{Valid: true}
-}
-
-type VerifyResult struct {
-	Valid  bool   `json:"valid"`
-	Reason string `json:"reason,omitempty"`
 }
 
 func sign(secret, timestamp string, body []byte) string {

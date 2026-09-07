@@ -22,7 +22,7 @@ type StatusResponse struct {
 	RecentIncidents []domain.Incident `json:"recent_incidents"`
 }
 
-func (s *Service) GetStatus(ctx context.Context) (*StatusResponse, error {
+func (s *Service) GetStatus(ctx context.Context) (*StatusResponse, error) {
 	incidents, err := s.repo.List(ctx, 20)
 	if err != nil {
 		return nil, err

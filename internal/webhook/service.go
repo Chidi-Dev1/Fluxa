@@ -185,7 +185,7 @@ func (s *service) ReplayDeadLetter(ctx context.Context, deadLetterID string) err
 	}
 
 	if s.queueClient != nil {
-		_, err = s.queueClient.EnqueueWebhookDeliver(ctx, newDel.ID, asynq.ProcessIn(0))
+		_, err = s.queueClient.EnqueueWebhookDeliveryy(ctx, newDel.ID)
 		return err
 	}
 	return nil
@@ -256,7 +256,7 @@ func (s *service) TriggerEvent(ctx context.Context, eventType string, payload in
 			continue
 		}
 
-		_, _ = s.queueClient.EnqueueWebhookDeliver(ctx, deliv.ID, asynq.ProcessIn(0))
+		_, _ = s.queueClient.EnqueueWebhookDelivery(ctx, deliv.ID, asynq.ProcessIn(0))
 	}
 	return nil
 }
@@ -303,7 +303,7 @@ func (s *service) Deliver(ctx context.Context, deliveryID string) error {
 		deliv.NextAttemptAt = &nextAttempt
 		deliv.Status = "pending"
 		_ = s.repo.UpdateDelivery(ctx, deliv)
-		_, _ = s.queueClient.EnqueueWebhookDeliver(ctx, deliv.ID, asynq.ProcessIn(nextDelay))
+		_, _ = s.queueClient.EnqueueWebhookDelivery(ctx, deliv.ID, asynq.ProcessIn(nextDelay))
 		return nil
 	}
 
@@ -334,7 +334,7 @@ func (s *service) Deliver(ctx context.Context, deliveryID string) error {
 	defer resp.Body.Close()
 
 	code := resp.StatusCode
-	deliv.ResponseCode = &code
+	deliv.ResponseCode = code
 
 	if code >= 200 && code < 300 {
 		deliv.Status = "success"
@@ -356,8 +356,7 @@ func (s *service) Deliver(ctx context.Context, deliveryID string) error {
 
 func (s *service) handleDeliveryFailure(ctx context.Context, deliv *domain.WebhookDelivery, ep *domain.WebhookEndpoint, errMsg string, code *int, body *string) error {
 	deliv.Status = "failed"
-	clientErr := errMsg
-	deliv.ErrorMessage = &clientErr
+	deliv.ErrorMessage = errMsg
 	if code != nil {
 		deliv.ResponseCode = code
 	}
@@ -408,7 +407,7 @@ func (s *service) handleDeliveryFailure(ctx context.Context, deliv *domain.Webho
 	_ = s.repo.UpdateDelivery(ctx, deliv)
 
 	if s.queueClient != nil {
-		_, _ = s.queueClient.EnqueueWebhookDeliver(ctx, deliv.ID, asynq.ProcessIn(nextDelay))
+		_, _ = s.queueClient.EnqueueWebhookDelivery(ctx, deliv.ID, asynq.ProcessIn(nextDelay))
 	}
 
 	return fmt.Errorf("webhook delivery failed (attempt %d/%d): %s", deliv.AttemptCount, s.maxAttempts, errMsg)
