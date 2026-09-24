@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fluxa/fluxa/internal/fiat"
@@ -196,12 +197,12 @@ func (p *Provider) HandleWebhook(ctx context.Context, payload []byte, headers ht
 	var data struct {
 		Event string `json:"event"`
 		Data  struct {
-			ID        json.Number `json:"id"`
-			TxRef     string      `json:"tx_ref"`
-			Status    string      `json:"status"`
-			Amount    float64     `json:"amount"`
-			Reference string      `json:"reference"`
-			Currency  string      `json:"currency"`
+			ID        json.Number     `json:"id"`
+			TxRef     string          `json:"tx_ref"`
+			Status    string          `json:"status"`
+			Amount    json.RawMessage `json:"amount"`
+			Reference string          `json:"reference"`
+			Currency  string          `json:"currency"`
 		} `json:"data"`
 	}
 
@@ -222,11 +223,16 @@ func (p *Provider) HandleWebhook(ctx context.Context, payload []byte, headers ht
 		return nil, err
 	}
 
+	amount, err := parseWebhookAmount(data.Data.Amount)
+	if err != nil {
+		return nil, err
+	}
+
 	evt := &fiat.RailEvent{
 		ProviderRef: reference,
 		EventID:     data.Data.ID.String(),
 		Status:      status,
-		Amount:      decimal.NewFromFloat(data.Data.Amount),
+		Amount:      amount,
 		Currency:    data.Data.Currency,
 	}
 
@@ -269,6 +275,54 @@ func (p *Provider) verifyWebhookSignature(headers http.Header) error {
 		return fmt.Errorf("invalid webhook signature")
 	}
 	return nil
+}
+
+// maxWebhookAmountScale bounds the fractional precision accepted on inbound
+// webhook amounts. Fiat rails settle at two decimal places at most, so six
+// is generous headroom; anything beyond it is rejected as over-precision
+// rather than silently rounded, keeping the exact-match check in the fiat
+// service deterministic.
+const maxWebhookAmountScale = 6
+
+// parseWebhookAmount decodes a webhook amount without ever routing the value
+// through float64: the raw JSON literal is converted with
+// decimal.NewFromString, so values like 100.10 stay exactly 100.10 instead
+// of becoming 100.099999999999994.
+//
+// Policy, applied deterministically:
+//   - missing (absent or null) → error
+//   - malformed (not a JSON number or numeric string) → error
+//   - zero or negative → error (a deposit callback must carry a positive amount)
+//   - more than maxWebhookAmountScale fractional digits → error
+//   - scientific notation (e.g. 1e2) is accepted: it converts exactly.
+func parseWebhookAmount(raw json.RawMessage) (decimal.Decimal, error) {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return decimal.Decimal{}, fmt.Errorf("webhook amount is missing")
+	}
+	// Flutterwave sends amounts as JSON numbers, but accept a JSON string
+	// carrying the same decimal literal for robustness.
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		var unquoted string
+		if err := json.Unmarshal(raw, &unquoted); err != nil {
+			return decimal.Decimal{}, fmt.Errorf("malformed webhook amount: %w", err)
+		}
+		s = strings.TrimSpace(unquoted)
+	}
+	amount, err := decimal.NewFromString(s)
+	if err != nil {
+		return decimal.Decimal{}, fmt.Errorf("malformed webhook amount %q", s)
+	}
+	if amount.IsNegative() || amount.IsZero() {
+		return decimal.Decimal{}, fmt.Errorf("webhook amount must be positive, got %s", amount.String())
+	}
+	if scale := int(-amount.Exponent()); scale > maxWebhookAmountScale {
+		return decimal.Decimal{}, fmt.Errorf(
+			"webhook amount exceeds maximum precision of %d decimal places: %s",
+			maxWebhookAmountScale, amount.String(),
+		)
+	}
+	return amount, nil
 }
 
 // mapFlutterwaveStatus translates a Flutterwave charge/transfer status into

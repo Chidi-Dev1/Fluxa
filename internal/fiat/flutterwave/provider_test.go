@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/fluxa/fluxa/internal/fiat"
+	"github.com/shopspring/decimal"
 )
 
 func chargeCompletedPayload(txRef, status string, amount string, currency string) string {
@@ -209,5 +210,114 @@ func TestHandleWebhook_EventType(t *testing.T) {
 	}
 	if evt.Type != fiat.EventDepositConfirmed {
 		t.Errorf("expected type %s, got %s", fiat.EventDepositConfirmed, evt.Type)
+	}
+}
+
+// ─── exact decimal amount parsing (no float64) ──────────────────────────────
+
+func TestHandleWebhook_FractionalAmount_ParsesExactly(t *testing.T) {
+	// Regression test: decoding through float64 turned 100.10 into
+	// 100.099999999999994, failing the exact-match check against the stored
+	// deposit. The raw literal must convert exactly.
+	p := NewProvider("mock", "secret")
+	payload := chargeCompletedPayload("REF-1", "successful", "100.10", "NGN")
+
+	evt, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := decimal.RequireFromString("100.10")
+	if !evt.Amount.Equal(want) {
+		t.Errorf("expected exact amount %s, got %s", want, evt.Amount)
+	}
+}
+
+func TestHandleWebhook_StringAmount_Accepted(t *testing.T) {
+	p := NewProvider("mock", "secret")
+	payload := chargeCompletedPayload("REF-1", "successful", `"100.10"`, "NGN")
+
+	evt, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !evt.Amount.Equal(decimal.RequireFromString("100.10")) {
+		t.Errorf("expected exact amount 100.10, got %s", evt.Amount)
+	}
+}
+
+func TestHandleWebhook_HighPrecisionWithinCap_Accepted(t *testing.T) {
+	p := NewProvider("mock", "secret")
+	payload := chargeCompletedPayload("REF-1", "successful", "10.123456", "NGN")
+
+	evt, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !evt.Amount.Equal(decimal.RequireFromString("10.123456")) {
+		t.Errorf("expected exact amount 10.123456, got %s", evt.Amount)
+	}
+}
+
+func TestHandleWebhook_ScientificNotation_AcceptedExactly(t *testing.T) {
+	// Policy: scientific notation converts exactly (1e2 == 100).
+	p := NewProvider("mock", "secret")
+	payload := chargeCompletedPayload("REF-1", "successful", "1e2", "NGN")
+
+	evt, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !evt.Amount.Equal(decimal.NewFromInt(100)) {
+		t.Errorf("expected exact amount 100, got %s", evt.Amount)
+	}
+}
+
+func TestHandleWebhook_OverPrecisionAmount_Rejected(t *testing.T) {
+	p := NewProvider("mock", "secret")
+	payload := chargeCompletedPayload("REF-1", "successful", "10.1234567", "NGN")
+
+	_, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret"))
+	if err == nil {
+		t.Fatal("expected error for over-precision amount, got nil")
+	}
+}
+
+func TestHandleWebhook_NegativeAmount_Rejected(t *testing.T) {
+	p := NewProvider("mock", "secret")
+	payload := chargeCompletedPayload("REF-1", "successful", "-50", "NGN")
+
+	_, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret"))
+	if err == nil {
+		t.Fatal("expected error for negative amount, got nil")
+	}
+}
+
+func TestHandleWebhook_ZeroAmount_Rejected(t *testing.T) {
+	p := NewProvider("mock", "secret")
+	payload := chargeCompletedPayload("REF-1", "successful", "0", "NGN")
+
+	_, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret"))
+	if err == nil {
+		t.Fatal("expected error for zero amount, got nil")
+	}
+}
+
+func TestHandleWebhook_MissingAmount_Rejected(t *testing.T) {
+	p := NewProvider("mock", "secret")
+	payload := `{"event":"charge.completed","data":{"id":1,"tx_ref":"REF-1","status":"successful","currency":"NGN"}}`
+
+	_, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret"))
+	if err == nil {
+		t.Fatal("expected error for missing amount, got nil")
+	}
+}
+
+func TestHandleWebhook_MalformedAmount_Rejected(t *testing.T) {
+	p := NewProvider("mock", "secret")
+	for _, amount := range []string{`"abc"`, `"12.34.56"`, `true`} {
+		payload := chargeCompletedPayload("REF-1", "successful", amount, "NGN")
+		if _, err := p.HandleWebhook(nil, []byte(payload), headersWithSignature("secret")); err == nil {
+			t.Fatalf("expected error for malformed amount %s, got nil", amount)
+		}
 	}
 }

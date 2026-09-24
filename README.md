@@ -102,8 +102,19 @@ curl http://localhost:3000/health
 This starts:
 - **API** on `http://localhost:3000`
 - **Worker** for background jobs
-- **PostgreSQL** on port 5432
-- **Redis** on port 6379
+- **PostgreSQL 15** on port 5432
+- **Redis 7** on port 6379
+- **Migrate** (one-shot): runs `api -migrate-only` before the API/worker boot, so the database is always on the latest schema — no manual `make migrate` needed.
+
+Images are built from `Dockerfile.api` (`cmd/api`) and `Dockerfile.worker` (`cmd/worker`).
+
+For development with hot reload (rebuilds + restarts on source changes):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml watch
+```
+
+The dev override bind-mounts the source tree (read-only, for inspection) and watches `cmd/`, `internal/`, and `go.mod`/`go.sum`.
 
 ### Option 2: Local Development
 
@@ -153,10 +164,24 @@ curl -X POST http://localhost:3000/v1/auth/register \
 Response:
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIs...",
-  "tenant_id": "0193b0b4-1b33-7e9a-bcf6-..."
+  "user": {
+    "id": "0193b0b4-1b33-7e9a-bcf6-...",
+    "email": "demo@example.com",
+    "name": "Demo Fintech",
+    "created_at": "2026-06-22T12:00:00Z"
+  },
+  "tenant": {
+    "id": "0193b0b4-1b33-7e9a-bcf6-...",
+    "name": "Demo Fintech",
+    "created_at": "2026-06-22T12:00:00Z"
+  },
+  "role": "owner",
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
 }
 ```
+
+Use the `access_token` as `Authorization: Bearer <access_token>`. (`POST /v1/auth/login` with `{ "email", "password" }` returns the same shape; `POST /v1/auth/refresh` with `{ "refresh_token" }` mints a new pair.)
 
 ### 2. Create an API key
 
@@ -197,6 +222,7 @@ Create a second wallet, fund it, then transfer:
 curl -X POST http://localhost:3000/v1/transfers \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk_live_..." \
+  -H "Idempotency-Key: 123e4567-e89b-42d3-a456-426614174000" \
   -d '{
     "from_wallet_id": "<sender_id>",
     "to_wallet_id": "<recipient_id>",
