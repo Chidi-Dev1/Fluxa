@@ -23,8 +23,20 @@ curl -X POST http://localhost:3000/v1/auth/register \
 **Expected response (201 Created):**
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIs...",
-  "tenant_id": "0193b0b4-1b33-7e9a-bcf6-2e2a0abb6d3f"
+  "user": {
+    "id": "0193b0b4-1b33-7e9a-bcf6-2e2a0abb6d3f",
+    "email": "dev@myfintech.co",
+    "name": "My Fintech Co",
+    "created_at": "2026-06-22T12:00:00Z"
+  },
+  "tenant": {
+    "id": "0193b0b4-1b33-7e9a-bcf6-2e2a0abb6d40",
+    "name": "My Fintech Co",
+    "created_at": "2026-06-22T12:00:00Z"
+  },
+  "role": "owner",
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
 }
 ```
 
@@ -32,7 +44,18 @@ curl -X POST http://localhost:3000/v1/auth/register \
 - `400 BAD_REQUEST` — Missing or invalid fields. Ensure `name`, `email`, and `password` are all present.
 - `409 Conflict` — Email already registered. Use a different email or proceed to login.
 
-Save the `token` — you'll use it as `Authorization: Bearer <token>` in the next step.
+Save the `access_token` — you'll use it as `Authorization: Bearer <access_token>` in the next step. The `refresh_token` lets you mint a new access token without re-entering credentials:
+
+```bash
+curl -X POST http://localhost:3000/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "dev@myfintech.co",
+    "password": "your-secure-password"
+  }'
+```
+
+Login accepts `{ "email", "password" }` and returns the same `access_token` / `refresh_token` shape. To refresh, POST `{ "refresh_token": "<refresh_token>" }` to `/v1/auth/refresh`.
 
 ---
 
@@ -81,8 +104,11 @@ Create a Stellar wallet. Fluxa generates a keypair and stores the secret key enc
 ```bash
 curl -X POST http://localhost:3000/v1/wallets \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk_live_..."
+  -H "Authorization: Bearer sk_live_..." \
+  -H "Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000"
 ```
+
+> Mutating requests require a unique `Idempotency-Key` header (UUID v4) — replaying the same key returns the original result instead of creating a duplicate. Generate a fresh UUID for every new wallet, transfer, or conversion.
 
 **Expected response (201 Created):**
 ```json
@@ -158,6 +184,7 @@ Before the wallet can hold USDC, it must establish a trustline to the USDC issue
 curl -X POST http://localhost:3000/v1/wallets/<wallet_id>/trustlines \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk_live_..." \
+  -H "Idempotency-Key: 6ba7b810-9dad-11d1-80b4-00c04fd430c8" \
   -d '{
     "asset_code": "USDC",
     "issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
@@ -193,8 +220,8 @@ curl -X POST http://localhost:3000/v1/fx/quote \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk_live_..." \
   -d '{
-    "source_asset": "USDC",
-    "dest_asset": "NGN",
+    "from_asset": "USDC",
+    "to_asset": "NGN",
     "amount": "100.00"
   }'
 ```
@@ -202,15 +229,16 @@ curl -X POST http://localhost:3000/v1/fx/quote \
 **Expected response (200 OK):**
 ```json
 {
-  "source_asset": "USDC",
-  "dest_asset": "NGN",
-  "source_amount": "100",
-  "dest_amount": "150000",
-  "fee_amount": "0.50",
-  "net_amount": "99.50",
-  "fee_bps": 50,
+  "id": "0193b0b4-1b33-7e9a-bcf6-2e2a0abb6d45",
+  "org_id": "0193b0b4-1b33-7e9a-bcf6-2e2a0abb6d40",
+  "from_asset": "USDC",
+  "to_asset": "NGN",
+  "from_amount": "100",
+  "to_amount": "150000",
   "rate": "1500",
-  "expires_at": "2026-06-22T12:00:30Z"
+  "fee": "0.50",
+  "expires_at": "2026-06-22T12:00:30Z",
+  "used": false
 }
 ```
 
@@ -218,23 +246,22 @@ curl -X POST http://localhost:3000/v1/fx/quote \
 - `400 BAD_REQUEST` — Unsupported currency pair. Check that both assets are supported.
 - `400 BAD_REQUEST` — `fee schedule not found`. Contact support to configure your fee schedule.
 
-The `expires_at` field gives you 30 seconds to execute the conversion. If it expires, you'll need to request a new quote.
+The `expires_at` field gives you 30 seconds to execute the conversion — pass the returned `id` as `quote_id` in the next step. If the quote expires (or was already used), you'll need to request a new one.
 
 ---
 
 ## Step 7: Execute the conversion
 
-Convert USDC to NGN using a previously quoted rate. This internally fetches a fresh quote, validates it hasn't expired, and executes the swap.
+Convert using the quote from Step 6. Pass the quote's `id` as `quote_id` — the server validates the quote hasn't expired and hasn't been used before executing the swap. Both IDs must be UUIDs.
 
 ```bash
 curl -X POST http://localhost:3000/v1/fx/convert \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk_live_..." \
+  -H "Idempotency-Key: 7c9e6679-7425-40de-944b-e07fc1f90ae7" \
   -d '{
-    "wallet_id": "<wallet_id>",
-    "source_asset": "USDC",
-    "dest_asset": "NGN",
-    "amount": "100.00"
+    "wallet_id": "550e8400-e29b-41d4-a716-446655440000",
+    "quote_id": "0193b0b4-1b33-7e9a-bcf6-2e2a0abb6d45"
   }'
 ```
 
@@ -242,18 +269,23 @@ curl -X POST http://localhost:3000/v1/fx/convert \
 ```json
 {
   "id": "conv-uuid",
-  "wallet_id": "0193b0b4-...",
+  "wallet_id": "550e8400-e29b-41d4-a716-446655440000",
   "source_asset": "USDC",
   "dest_asset": "NGN",
   "source_amount": "0.0666666",
   "dest_amount": "100.0000000",
+  "fee_amount": "0.0000333",
+  "fee_bps": 50,
   "rate": "1500.0000000",
+  "tx_hash": "a1b2c3d4e5f67890...",
   "created_at": "2026-06-22T12:00:00Z"
 }
 ```
 
 **What could go wrong:**
-- `400 BAD_REQUEST` — `slippage tolerance exceeded`. The quote expired. Get a new quote and try again.
+- `400 BAD_REQUEST` — Missing or non-UUID `wallet_id` / `quote_id`.
+- `400 IDEMPOTENCY_KEY_REQUIRED` — Missing or invalid `Idempotency-Key` header. Send a fresh UUID v4.
+- `422 QUOTE_EXPIRED` — The quote expired (30s TTL) or was already used. Get a new quote and try again.
 - `400 BAD_REQUEST` — `insufficient balance`. The wallet doesn't have enough USDC.
 - `400 BAD_REQUEST` — `invalid or unsupported asset`. Verify the asset code.
 
@@ -269,6 +301,7 @@ First, create a **second wallet** (recipient) by repeating Step 3, and fund it w
 curl -X POST http://localhost:3000/v1/transfers \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk_live_..." \
+  -H "Idempotency-Key: 123e4567-e89b-42d3-a456-426614174000" \
   -d '{
     "from_wallet_id": "<sender_wallet_id>",
     "to_wallet_id": "<recipient_wallet_id>",
@@ -300,6 +333,7 @@ curl -X POST http://localhost:3000/v1/transfers \
 - `400 BAD_REQUEST` — `insufficient balance`. The sender wallet doesn't have enough USDC.
 - `400 BAD_REQUEST` — `invalid or unsupported asset`. Use `USDC` or another supported asset.
 - `400 BAD_REQUEST` — `fee schedule not found`. Contact support.
+- `400 IDEMPOTENCY_KEY_REQUIRED` — Missing or invalid `Idempotency-Key` header. Send a fresh UUID v4.
 
 > The `fee_amount` is the platform fee deducted from the transfer. `net_amount` is what the recipient receives.
 
