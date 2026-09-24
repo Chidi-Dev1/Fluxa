@@ -52,6 +52,9 @@ type Config struct {
 	ComplianceFuzzyThreshold    int
 	ComplianceReloadMinutes     int
 	WorkerEnabled               bool
+	// ClaimableBalanceSourceWalletID funds claimable balances whose request did
+	// not name a source wallet.
+	ClaimableBalanceSourceWalletID string
 }
 
 func splitCSV(value string) []string {
@@ -165,5 +168,7 @@ func Load() (*Config, error) {
 		ComplianceFuzzyThreshold:    viper.GetInt("COMPLIANCE_FUZZY_THRESHOLD"),
 		ComplianceReloadMinutes:     viper.GetInt("COMPLIANCE_RELOAD_MINUTES"),
 		WorkerEnabled:               workerEnabled,
+
+		ClaimableBalanceSourceWalletID: viper.GetString("CLAIMABLE_BALANCE_SOURCE_WALLET_ID"),
 	}, nil
 }

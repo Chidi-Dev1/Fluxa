@@ -9,6 +9,7 @@ import (
 
 	"github.com/fluxa/fluxa/internal/alerting"
 	"github.com/fluxa/fluxa/internal/assets"
+	"github.com/fluxa/fluxa/internal/claimable"
 	"github.com/fluxa/fluxa/internal/compliance"
 	"github.com/fluxa/fluxa/internal/config"
 	"github.com/fluxa/fluxa/internal/fees"
@@ -143,6 +144,23 @@ func main() {
 	)
 	treasuryWorker := treasury.NewWorker(treasurySvc)
 
+	// Claimable balances need the same signer and Horizon client as settlement:
+	// creating one spends the org's funds and revoking one claims them back.
+	claimableSvc := claimable.NewService(
+		postgres.NewClaimableBalanceRepo(repoDB),
+		stellarClient,
+		stellar.NewClaimableBalanceClient(cfg.StellarHorizonURL),
+		signer,
+		postgres.NewClaimableWalletResolver(walletRepo),
+		webhook.NewDispatcher(webhookRepo),
+		cfg.ClaimableBalanceSourceWalletID,
+		map[string]string{
+			"USDC": cfg.StellarUSDCIssuer,
+			"EURC": cfg.StellarEURCIssuer,
+		},
+	)
+	claimableWorker := claimable.NewWorker(claimableSvc)
+
 	transferSvc := transfer.NewService(txRepo, walletRepo, feeSvc, qClient)
 
 	// The worker screens too: scheduled payouts run here and go through
@@ -227,6 +245,7 @@ func main() {
 	mux.HandleFunc(queue.TypeWebhookDeliver, webhookWorker.HandleDeliver)
 	mux.HandleFunc(queue.TypeRunSchedules, scheduleWorker.HandleRunSchedules)
 	mux.HandleFunc(queue.TypeTreasurySweep, treasuryWorker.HandleSweep)
+	mux.HandleFunc(queue.TypeExpireClaimableBalances, claimableWorker.HandleExpiry)
 	if complianceWorker != nil {
 		mux.HandleFunc(queue.TypeRefreshSanctions, complianceWorker.HandleRefreshSanctions)
 	}
@@ -266,6 +285,14 @@ func main() {
 	treasurySweepTask := asynq.NewTask(queue.TypeTreasurySweep, nil, asynq.Queue("low"))
 	if _, err := scheduler.Register("@daily", treasurySweepTask); err != nil {
 		log.Fatal().Err(err).Msg("register treasury sweep scheduler")
+	}
+
+	// The expiry tracker runs every 5 minutes so an unclaimed balance is marked
+	// expired (and, when revoke_on_expiry is set, claimed back to the org)
+	// within 10 minutes of its expires_at.
+	claimableExpiryTask := asynq.NewTask(queue.TypeExpireClaimableBalances, nil)
+	if _, err := scheduler.Register("@every 5m", claimableExpiryTask); err != nil {
+		log.Fatal().Err(err).Msg("register claimable balance expiry scheduler")
 	}
 
 	// The OFAC SDN list is republished on business days; a daily refresh on the
