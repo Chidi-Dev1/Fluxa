@@ -27,16 +27,18 @@ const (
 
 // Quote is a priced, time-limited conversion offer identified by a unique token.
 type Quote struct {
-	ID         string          `json:"id"`
-	OrgID      string          `json:"org_id"`
-	FromAsset  string          `json:"from_asset"`
-	ToAsset    string          `json:"to_asset"`
-	FromAmount decimal.Decimal `json:"from_amount"`
-	ToAmount   decimal.Decimal `json:"to_amount"`
-	Rate       decimal.Decimal `json:"rate"`
-	Fee        decimal.Decimal `json:"fee"`
-	ExpiresAt  time.Time       `json:"expires_at"`
-	Used       bool            `json:"used"`
+	ID                      string          `json:"id"`
+	OrgID                   string          `json:"org_id"`
+	FromAsset               string          `json:"from_asset"`
+	ToAsset                 string          `json:"to_asset"`
+	FromAmount              decimal.Decimal `json:"from_amount"`
+	ToAmount                decimal.Decimal `json:"to_amount"`
+	Rate                    decimal.Decimal `json:"rate"`
+	Fee                     decimal.Decimal `json:"fee"`
+	ExpiresAt               time.Time       `json:"expires_at"`
+	Used                    bool            `json:"used"`
+	FromRequiresTrustline   bool            `json:"from_requires_trustline"`
+	ToRequiresTrustline     bool            `json:"to_requires_trustline"`
 }
 
 // FXQuoteAuditRepo persists quote snapshots as an audit trail.
@@ -118,6 +120,11 @@ func NewService(
 // GetQuote prices a conversion, stores the quote in Redis with a 30-second TTL,
 // and writes an audit row to Postgres. Returns the quote with its ID token.
 func (s *service) GetQuote(ctx context.Context, fromAsset, toAsset, amount string) (*Quote, error) {
+	fromAsset, toAsset, err := validateFXPair(fromAsset, toAsset)
+	if err != nil {
+		return nil, err
+	}
+
 	rateResp, err := s.GetRates(ctx, fromAsset, toAsset)
 	if err != nil {
 		return nil, err
@@ -130,6 +137,9 @@ func (s *service) GetQuote(ctx context.Context, fromAsset, toAsset, amount strin
 	if fromAmt.Sign() <= 0 {
 		return nil, domain.ErrInvalidQuoteAmount
 	}
+	if err := validateAmountLimits(fromAsset, fromAmt); err != nil {
+		return nil, err
+	}
 
 	toAmt := fromAmt.Mul(rateResp.Rate)
 	tenantID := tenant.IDFromContext(ctx)
@@ -140,16 +150,18 @@ func (s *service) GetQuote(ctx context.Context, fromAsset, toAsset, amount strin
 	}
 
 	q := &Quote{
-		ID:         uuid.New().String(),
-		OrgID:      tenantID,
-		FromAsset:  fromAsset,
-		ToAsset:    toAsset,
-		FromAmount: fromAmt,
-		ToAmount:   toAmt,
-		Rate:       rateResp.Rate,
-		Fee:        feeAmt,
-		ExpiresAt:  time.Now().UTC().Add(quoteTTL),
-		Used:       false,
+		ID:                    uuid.New().String(),
+		OrgID:                 tenantID,
+		FromAsset:             fromAsset,
+		ToAsset:               toAsset,
+		FromAmount:            fromAmt,
+		ToAmount:              toAmt,
+		Rate:                  rateResp.Rate,
+		Fee:                   feeAmt,
+		ExpiresAt:             time.Now().UTC().Add(quoteTTL),
+		Used:                  false,
+		FromRequiresTrustline: AssetRequiresTrustline(fromAsset),
+		ToRequiresTrustline:   AssetRequiresTrustline(toAsset),
 	}
 
 	data, err := json.Marshal(q)
@@ -234,6 +246,11 @@ func (s *service) ExecuteConversion(ctx context.Context, walletID, quoteID strin
 // GetRates returns a rate for the given pair, serving from the Redis cache and
 // falling back to a live provider call on a cache miss.
 func (s *service) GetRates(ctx context.Context, from, to string) (*RateResponse, error) {
+	from, to, err := validateFXPair(from, to)
+	if err != nil {
+		return nil, err
+	}
+
 	if resp, ok := s.rateCache.Get(ctx, from, to); ok {
 		return resp, nil
 	}

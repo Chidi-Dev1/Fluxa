@@ -184,12 +184,16 @@ func main() {
 	issuers := map[string]string{
 		"USDC": cfg.StellarUSDCIssuer,
 		"EURC": cfg.StellarEURCIssuer,
+		"XLM":  "", // native asset — no issuer
 	}
-	horizonProvider := fx.NewHorizonProvider(cfg.StellarHorizonURL, []string{"USDC-EURC", "EURC-USDC"}, issuers)
+	fxPairs := append([]string{"USDC-EURC", "EURC-USDC"}, fx.DefaultXLMFXPairs()...)
+	horizonProvider := fx.NewHorizonProvider(cfg.StellarHorizonURL, fxPairs, issuers)
+	// CoinGecko oracle backs XLM pairs when DEX order-book liquidity is thin.
+	oracleProvider := fx.NewCoinGeckoProvider(fx.DefaultXLMFXPairs())
 	fxSvc := fx.NewService(
 		walletRepo, convRepo, fxQuoteRepo,
 		feeSvc, stellarClient, redisClient,
-		cfg.StellarUSDCIssuer, []fx.Provider{horizonProvider}, cfg.FXSpreadBps,
+		cfg.StellarUSDCIssuer, []fx.Provider{horizonProvider, oracleProvider}, cfg.FXSpreadBps,
 	)
 	walletSvc.WithFXService(fxSvc)
 

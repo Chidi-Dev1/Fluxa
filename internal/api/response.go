@@ -93,7 +93,7 @@ func HandleDomainError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrFeeScheduleNotFound), errors.Is(err, domain.ErrBatchTooLarge),
 		errors.Is(err, domain.ErrBatchEmpty), errors.Is(err, domain.ErrWalletLimitReached),
 		errors.Is(err, domain.ErrTransferLimitReached), errors.Is(err, domain.ErrWebhookLimitReached),
-		errors.Is(err, domain.ErrInvalidQuoteAmount):
+		errors.Is(err, domain.ErrInvalidQuoteAmount), errors.Is(err, domain.ErrAmountOutOfLimits):
 		BadRequest(w, err.Error())
 	case errors.Is(err, domain.ErrUserAlreadyExists):
 		Error(w, http.StatusConflict, "CONFLICT", err.Error())

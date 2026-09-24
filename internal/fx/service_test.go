@@ -643,3 +643,179 @@ func TestGetRates_Success(t *testing.T) {
 	}
 }
 
+
+// ---------------------------------------------------------------------------
+// Native XLM (issue #135) conversion flows
+// ---------------------------------------------------------------------------
+
+type xlmAwareProvider struct {
+	rates map[string]decimal.Decimal
+	fail  map[string]bool
+}
+
+func (m *xlmAwareProvider) GetRate(_ context.Context, from, to, _ string) (decimal.Decimal, error) {
+	key := from + "-" + to
+	if m.fail[key] {
+		return decimal.Zero, errors.New("order book unavailable")
+	}
+	if rate, ok := m.rates[key]; ok {
+		return rate, nil
+	}
+	return decimal.Zero, errors.New("unsupported pair " + key)
+}
+
+func (m *xlmAwareProvider) SupportedPairs() []string {
+	pairs := make([]string, 0, len(m.rates)+len(m.fail))
+	seen := map[string]struct{}{}
+	for k := range m.rates {
+		pairs = append(pairs, k)
+		seen[k] = struct{}{}
+	}
+	for k := range m.fail {
+		if _, ok := seen[k]; !ok {
+			pairs = append(pairs, k)
+		}
+	}
+	return pairs
+}
+
+func TestGetQuote_XLMToUSDC_NoTrustlineRequired(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	p := &xlmAwareProvider{rates: map[string]decimal.Decimal{
+		"XLM-USDC": decimal.RequireFromString("0.25"),
+	}}
+	svc := NewService(newMockWalletRepo(), newMockConvRepo(), &mockAuditRepo{}, &mockFeeSvc{}, &mockStellar{}, rdb, "usdc-issuer", []Provider{p}, 0)
+
+	q, err := svc.GetQuote(tenantCtx("org-1"), "xlm", "usdc", "100")
+	if err != nil {
+		t.Fatalf("GetQuote: %v", err)
+	}
+	if q.FromAsset != "XLM" || q.ToAsset != "USDC" {
+		t.Fatalf("assets = %s->%s", q.FromAsset, q.ToAsset)
+	}
+	if q.FromRequiresTrustline {
+		t.Fatal("XLM source must not require trustline")
+	}
+	if !q.ToRequiresTrustline {
+		t.Fatal("USDC dest should require trustline")
+	}
+	wantTo := decimal.NewFromInt(100).Mul(decimal.RequireFromString("0.25"))
+	if !q.ToAmount.Equal(wantTo) {
+		t.Fatalf("ToAmount = %s, want %s", q.ToAmount, wantTo)
+	}
+}
+
+func TestGetQuote_USDCToXLM(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	p := &xlmAwareProvider{rates: map[string]decimal.Decimal{
+		"USDC-XLM": decimal.NewFromInt(4),
+	}}
+	svc := NewService(newMockWalletRepo(), newMockConvRepo(), &mockAuditRepo{}, &mockFeeSvc{}, &mockStellar{}, rdb, "usdc-issuer", []Provider{p}, 0)
+
+	q, err := svc.GetQuote(tenantCtx("org-1"), "USDC", "XLM", "10")
+	if err != nil {
+		t.Fatalf("GetQuote: %v", err)
+	}
+	if q.ToRequiresTrustline {
+		t.Fatal("XLM dest must not require trustline")
+	}
+	if !q.FromRequiresTrustline {
+		t.Fatal("USDC source should require trustline")
+	}
+}
+
+func TestGetQuote_XLMAmountLimits(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	p := &xlmAwareProvider{rates: map[string]decimal.Decimal{"XLM-USDC": decimal.RequireFromString("0.25")}}
+	svc := NewService(newMockWalletRepo(), newMockConvRepo(), &mockAuditRepo{}, &mockFeeSvc{}, &mockStellar{}, rdb, "usdc-issuer", []Provider{p}, 0)
+
+	_, err = svc.GetQuote(tenantCtx("org-1"), "XLM", "USDC", "0.00000005")
+	if !errors.Is(err, domain.ErrAmountOutOfLimits) {
+		t.Fatalf("expected ErrAmountOutOfLimits, got %v", err)
+	}
+	_, err = svc.GetQuote(tenantCtx("org-1"), "XLM", "USDC", "1000001")
+	if !errors.Is(err, domain.ErrAmountOutOfLimits) {
+		t.Fatalf("expected ErrAmountOutOfLimits, got %v", err)
+	}
+}
+
+func TestGetRates_OracleFallbackWhenOrderBookFails(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	horizon := &xlmAwareProvider{
+		fail:  map[string]bool{"XLM-USDC": true},
+		rates: map[string]decimal.Decimal{},
+	}
+	oracle := &xlmAwareProvider{rates: map[string]decimal.Decimal{
+		"XLM-USDC": decimal.RequireFromString("0.30"),
+	}}
+	svc := NewService(newMockWalletRepo(), newMockConvRepo(), &mockAuditRepo{}, &mockFeeSvc{}, &mockStellar{}, rdb, "usdc-issuer", []Provider{horizon, oracle}, 0)
+
+	resp, err := svc.GetRates(tenantCtx("org-1"), "XLM", "USDC")
+	if err != nil {
+		t.Fatalf("GetRates: %v", err)
+	}
+	if !resp.MidMarketRate.Equal(decimal.RequireFromString("0.30")) {
+		t.Fatalf("mid = %s, want 0.30 (oracle)", resp.MidMarketRate)
+	}
+}
+
+func TestExecuteConversion_XLMPair(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	w := walletPtr("w-xlm", "org-1")
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cr := newMockConvRepo()
+	svc := NewService(newMockWalletRepo(w), cr, &mockAuditRepo{}, &mockFeeSvc{}, &mockStellar{}, rdb, "usdc-issuer", nil, 0)
+
+	q := &Quote{
+		ID:                    "q-xlm-1",
+		OrgID:                 "org-1",
+		FromAsset:             "XLM",
+		ToAsset:               "USDC",
+		FromAmount:            decimal.NewFromInt(100),
+		ToAmount:              decimal.NewFromInt(25),
+		Rate:                  decimal.RequireFromString("0.25"),
+		Fee:                   decimal.Zero,
+		ExpiresAt:             time.Now().UTC().Add(30 * time.Second),
+		Used:                  false,
+		FromRequiresTrustline: false,
+		ToRequiresTrustline:   true,
+	}
+	storeQuoteJSON(t, mr, q)
+
+	conv, err := svc.ExecuteConversion(tenantCtx("org-1"), "w-xlm", "q-xlm-1")
+	if err != nil {
+		t.Fatalf("ExecuteConversion: %v", err)
+	}
+	if conv.SourceAsset != "XLM" || conv.DestAsset != "USDC" {
+		t.Fatalf("unexpected assets %s->%s", conv.SourceAsset, conv.DestAsset)
+	}
+}
