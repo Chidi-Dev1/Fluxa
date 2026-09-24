@@ -8,8 +8,12 @@ import (
 
 type ScheduleFrequency string
 type ScheduleStatus string
+type MissedRunPolicy string
 
 const (
+	MissedRunPolicySkip    MissedRunPolicy = "skip"
+	MissedRunPolicyRunOnce MissedRunPolicy = "run_once"
+
 	FrequencyDaily   ScheduleFrequency = "daily"
 	FrequencyWeekly  ScheduleFrequency = "weekly"
 	FrequencyMonthly ScheduleFrequency = "monthly"
@@ -27,11 +31,13 @@ type Schedule struct {
 	TenantID   *string
 	FromWallet string
 	ToWallet   string
-	Asset      string
-	Amount     decimal.Decimal
-	Frequency  ScheduleFrequency
-	NextRunAt  time.Time
-	EndAt      *time.Time
+	Asset           string
+	Amount          decimal.Decimal
+	Frequency       ScheduleFrequency
+	Timezone        string
+	MissedRunPolicy MissedRunPolicy
+	NextRunAt       time.Time
+	EndAt           *time.Time
 	Status     ScheduleStatus
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
