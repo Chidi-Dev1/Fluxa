@@ -10,6 +10,9 @@ const (
 	TypeRunSchedules     = "schedule:run"
 	TypeTreasurySweep    = "treasury:sweep"
 	TypeRefreshSanctions = "compliance:sanctions_refresh"
+	// TypeExpireClaimableBalances sweeps claimable balances past their expiry
+	// and revokes the ones flagged revoke_on_expiry.
+	TypeExpireClaimableBalances = "claimable:expire"
 )
 
 type ProcessTransferPayload struct {

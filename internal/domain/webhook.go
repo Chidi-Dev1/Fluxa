@@ -14,10 +14,15 @@ const (
 	EventTypeSettlementCompleted = "settlement.completed"
 	EventTypeBatchCompleted      = "batch.completed"
 
-	EventTransferComplianceHold      = "transfer.compliance.hold"
-	EventTransferComplianceApproved  = "transfer.compliance.approved"
-	EventTransferComplianceRejected  = "transfer.compliance.rejected"
-	EventSanctionsRefreshFailed      = "sanctions.refresh.failed"
+	EventTransferComplianceHold     = "transfer.compliance.hold"
+	EventTransferComplianceApproved = "transfer.compliance.approved"
+	EventTransferComplianceRejected = "transfer.compliance.rejected"
+	EventSanctionsRefreshFailed     = "sanctions.refresh.failed"
+
+	EventClaimableBalanceCreated = "claimable_balance.created"
+	EventClaimableBalanceClaimed = "claimable_balance.claimed"
+	EventClaimableBalanceExpired = "claimable_balance.expired"
+	EventClaimableBalanceRevoked = "claimable_balance.revoked"
 )
 
 var SupportedEventTypes = []string{

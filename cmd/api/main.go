@@ -14,6 +14,7 @@ import (
 	"github.com/fluxa/fluxa/internal/assets"
 	"github.com/fluxa/fluxa/internal/auth"
 	"github.com/fluxa/fluxa/internal/batch"
+	"github.com/fluxa/fluxa/internal/claimable"
 	"github.com/fluxa/fluxa/internal/compliance"
 	"github.com/fluxa/fluxa/internal/config"
 	"github.com/fluxa/fluxa/internal/domain"
@@ -311,11 +312,30 @@ func main() {
 	scheduleHandler := schedule.NewHandler(scheduleSvc)
 	treasuryHandler := treasury.NewHandler(treasurySvc).WithMutationGate(server.RequireRole(domain.RoleOwner, domain.RoleAdmin))
 
+	// Claimable balances move real funds in both directions, so the mutating
+	// routes share the Owner/Admin gate used by /v1/keys and the treasury.
+	claimableSvc := claimable.NewService(
+		postgres.NewClaimableBalanceRepo(repoDB),
+		stellarClient,
+		stellar.NewClaimableBalanceClient(cfg.StellarHorizonURL),
+		signer,
+		postgres.NewClaimableWalletResolver(walletRepo),
+		webhook.NewDispatcher(webhookRepo),
+		cfg.ClaimableBalanceSourceWalletID,
+		map[string]string{
+			"USDC": cfg.StellarUSDCIssuer,
+			"EURC": cfg.StellarEURCIssuer,
+		},
+	)
+	claimableHandler := claimable.NewHandler(claimableSvc).
+		WithMutationGate(server.RequireRole(domain.RoleOwner, domain.RoleAdmin))
+
 	srv := server.New(
 		authHandler, orgHandler, walletHandler, transferHandler, fxHandler, fiatHandler,
 		anchorFiatHandler, anchorHandler,
 		feeHandler, reconcileHandler, apikeyHandler, apiKeyRepo,
-		webhookHandler, batchHandler, scheduleHandler, treasuryHandler, complianceHandler, jwtSecretBytes, cfg.Port,
+		webhookHandler, batchHandler, scheduleHandler, treasuryHandler, claimableHandler,
+		complianceHandler, jwtSecretBytes, cfg.Port,
 		map[string]server.DependencyCheck{
 			"postgres": db.Ping,
 			"replica":  func(ctx context.Context) error { return repoDB.ReplicaAvailable(ctx) },

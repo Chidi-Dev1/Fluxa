@@ -28,7 +28,7 @@ type ValidationErrorDetail struct {
 
 // validationErrorResponse includes per-row errors alongside the top-level error.
 type validationErrorResponse struct {
-	Error            errorDetail          `json:"error"`
+	Error            errorDetail             `json:"error"`
 	ValidationErrors []ValidationErrorDetail `json:"validation_errors"`
 }
 
@@ -86,15 +86,29 @@ func HandleDomainError(w http.ResponseWriter, err error) {
 		errors.Is(err, domain.ErrWebhookNotFound), errors.Is(err, domain.ErrWebhookDeliveryNotFound),
 		errors.Is(err, domain.ErrBatchNotFound), errors.Is(err, domain.ErrScheduleNotFound),
 		errors.Is(err, domain.ErrUserNotFound), errors.Is(err, domain.ErrOrgMemberNotFound),
-		errors.Is(err, domain.ErrInviteNotFound):
+		errors.Is(err, domain.ErrInviteNotFound), errors.Is(err, domain.ErrClaimableBalanceNotFound):
 		NotFound(w, err.Error())
 	case errors.Is(err, domain.ErrSelfTransfer), errors.Is(err, domain.ErrInvalidAsset),
 		errors.Is(err, domain.ErrInsufficientBalance), errors.Is(err, domain.ErrSlippageExceeded),
 		errors.Is(err, domain.ErrFeeScheduleNotFound), errors.Is(err, domain.ErrBatchTooLarge),
 		errors.Is(err, domain.ErrBatchEmpty), errors.Is(err, domain.ErrWalletLimitReached),
 		errors.Is(err, domain.ErrTransferLimitReached), errors.Is(err, domain.ErrWebhookLimitReached),
-		errors.Is(err, domain.ErrInvalidQuoteAmount):
+		errors.Is(err, domain.ErrInvalidQuoteAmount), errors.Is(err, domain.ErrInvalidAmount),
+		errors.Is(err, domain.ErrNoClaimants), errors.Is(err, domain.ErrClaimantNotFound),
+		errors.Is(err, domain.ErrClaimantNotCustodied), errors.Is(err, domain.ErrSourceWalletRequired),
+		errors.Is(err, domain.ErrSponsorNotCustodied):
 		BadRequest(w, err.Error())
+	// An unsatisfiable predicate is a 400 with its own code, not a generic bad
+	// request: the caller has to be able to tell "you cannot claim this yet"
+	// (retryable, once the predicate holds) from "this balance is unusable".
+	case errors.Is(err, domain.ErrPredicateNotSatisfiable):
+		Error(w, http.StatusBadRequest, "PREDICATE_NOT_SATISFIABLE", err.Error())
+	case errors.Is(err, domain.ErrInvalidPredicate):
+		Error(w, http.StatusBadRequest, "INVALID_PREDICATE", err.Error())
+	// A balance that is already claimed, expired or revoked is a conflict, not
+	// a malformed request: the request was fine, the resource moved on.
+	case errors.Is(err, domain.ErrClaimableBalanceNotPending):
+		Error(w, http.StatusConflict, "CLAIMABLE_BALANCE_NOT_PENDING", err.Error())
 	case errors.Is(err, domain.ErrUserAlreadyExists):
 		Error(w, http.StatusConflict, "CONFLICT", err.Error())
 	case errors.Is(err, domain.ErrInvalidCredentials):
