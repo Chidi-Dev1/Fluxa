@@ -14,6 +14,7 @@ import (
 	"github.com/fluxa/fluxa/internal/config"
 	"github.com/fluxa/fluxa/internal/fees"
 	"github.com/fluxa/fluxa/internal/indexer"
+	"github.com/fluxa/fluxa/internal/logging"
 	"github.com/fluxa/fluxa/internal/postgres"
 	"github.com/fluxa/fluxa/internal/queue"
 	"github.com/fluxa/fluxa/internal/reconcile"
@@ -27,28 +28,25 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/shopspring/decimal"
 )
 
 func main() {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
-
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal().Err(err).Msg("load config")
 	}
 
+	logger, err := logging.New(os.Stdout, cfg.LogLevel)
+	if err != nil {
+		log.Fatal().Err(err).Msg("configure logger")
+	}
+	log.Logger = logger
+
 	if !cfg.WorkerEnabled {
 		log.Info().Msg("worker disabled for this region")
 		return
-	}
-
-	if cfg.Env == "development" {
-		zerolog.SetGlobalLevel(zerolog.DebugLevel)
-	} else {
-		zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -238,6 +236,7 @@ func main() {
 	})
 
 	mux := asynq.NewServeMux()
+	mux.Use(logging.WorkerMiddleware(log.Logger))
 	mux.HandleFunc(queue.TypeProcessTransfer, settlementWorker.HandleProcessTransfer)
 	mux.HandleFunc(queue.TypeSyncLedger, indexerWorker.HandleSyncLedger)
 	mux.HandleFunc(queue.TypeReconcile, reconcileWorker.HandleReconcile)
