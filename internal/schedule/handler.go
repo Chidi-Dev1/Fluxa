@@ -36,16 +36,20 @@ type createScheduleRequest struct {
 	ToWalletID   string `json:"to_wallet_id"   validate:"required,uuid"`
 	Asset        string `json:"asset"          validate:"required"`
 	Amount       string `json:"amount"         validate:"required"`
-	Frequency    string `json:"frequency"      validate:"required,oneof=daily weekly monthly"`
-	StartDate    string `json:"start_date"     validate:"required"`
-	EndDate      string `json:"end_date"`
+	Frequency       string `json:"frequency"      validate:"required,oneof=daily weekly monthly"`
+	Timezone        string `json:"timezone"       validate:"required"`
+	MissedRunPolicy string `json:"missed_run_policy" validate:"required,oneof=skip run_once"`
+	StartDate       string `json:"start_date"     validate:"required"`
+	EndDate         string `json:"end_date"`
 }
 
 type updateScheduleRequest struct {
 	Status    string `json:"status"    validate:"omitempty,oneof=active paused"`
-	Amount    string `json:"amount"`
-	Frequency string `json:"frequency" validate:"omitempty,oneof=daily weekly monthly"`
-	EndDate   string `json:"end_date"`
+	Amount          string `json:"amount"`
+	Frequency       string `json:"frequency"         validate:"omitempty,oneof=daily weekly monthly"`
+	Timezone        string `json:"timezone"`
+	MissedRunPolicy string `json:"missed_run_policy" validate:"omitempty,oneof=skip run_once"`
+	EndDate         string `json:"end_date"`
 }
 
 type scheduleResponse struct {
@@ -53,12 +57,14 @@ type scheduleResponse struct {
 	FromWalletID string `json:"from_wallet_id"`
 	ToWalletID   string `json:"to_wallet_id"`
 	Asset        string `json:"asset"`
-	Amount       string `json:"amount"`
-	Frequency    string `json:"frequency"`
-	NextRunAt    string `json:"next_run_at"`
-	EndAt        string `json:"end_at,omitempty"`
-	Status       string `json:"status"`
-	CreatedAt    string `json:"created_at"`
+	Amount          string `json:"amount"`
+	Frequency       string `json:"frequency"`
+	Timezone        string `json:"timezone"`
+	MissedRunPolicy string `json:"missed_run_policy"`
+	NextRunAt       string `json:"next_run_at"`
+	EndAt           string `json:"end_at,omitempty"`
+	Status          string `json:"status"`
+	CreatedAt       string `json:"created_at"`
 }
 
 func toScheduleResponse(s *domain.Schedule) scheduleResponse {
@@ -67,11 +73,13 @@ func toScheduleResponse(s *domain.Schedule) scheduleResponse {
 		FromWalletID: s.FromWallet,
 		ToWalletID:   s.ToWallet,
 		Asset:        s.Asset,
-		Amount:       s.Amount.StringFixed(7),
-		Frequency:    string(s.Frequency),
-		NextRunAt:    s.NextRunAt.Format(time.RFC3339),
-		Status:       string(s.Status),
-		CreatedAt:    s.CreatedAt.Format(time.RFC3339),
+		Amount:          s.Amount.StringFixed(7),
+		Frequency:       string(s.Frequency),
+		Timezone:        s.Timezone,
+		MissedRunPolicy: string(s.MissedRunPolicy),
+		NextRunAt:       s.NextRunAt.Format(time.RFC3339),
+		Status:          string(s.Status),
+		CreatedAt:       s.CreatedAt.Format(time.RFC3339),
 	}
 	if s.EndAt != nil {
 		resp.EndAt = s.EndAt.Format(time.RFC3339)
@@ -102,6 +110,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, err = time.LoadLocation(req.Timezone)
+	if err != nil {
+		api.BadRequest(w, "invalid timezone")
+		return
+	}
+
 	var endAt *time.Time
 	if req.EndDate != "" {
 		parsed, err := time.Parse(time.RFC3339, req.EndDate)
@@ -116,10 +130,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		FromWalletID: req.FromWalletID,
 		ToWalletID:   req.ToWalletID,
 		Asset:        req.Asset,
-		Amount:       amount,
-		Frequency:    domain.ScheduleFrequency(req.Frequency),
-		StartAt:      startAt,
-		EndAt:        endAt,
+		Amount:          amount,
+		Frequency:       domain.ScheduleFrequency(req.Frequency),
+		Timezone:        req.Timezone,
+		MissedRunPolicy: domain.MissedRunPolicy(req.MissedRunPolicy),
+		StartAt:         startAt,
+		EndAt:           endAt,
 	})
 	if err != nil {
 		api.HandleDomainError(w, err)
@@ -180,6 +196,18 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.EndAt = &parsed
+	}
+	if req.Timezone != "" {
+		_, err := time.LoadLocation(req.Timezone)
+		if err != nil {
+			api.BadRequest(w, "invalid timezone")
+			return
+		}
+		in.Timezone = &req.Timezone
+	}
+	if req.MissedRunPolicy != "" {
+		policy := domain.MissedRunPolicy(req.MissedRunPolicy)
+		in.MissedRunPolicy = &policy
 	}
 
 	sch, err := h.svc.Update(r.Context(), id, in)

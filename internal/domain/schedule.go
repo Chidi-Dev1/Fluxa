@@ -8,6 +8,7 @@ import (
 
 type ScheduleFrequency string
 type ScheduleStatus string
+type MissedRunPolicy string
 
 // ScheduleRunStatus represents the lifecycle state of a single scheduled-payout
 // occurrence.  Each (schedule_id, expected_run_at) pair produces exactly one
@@ -15,6 +16,9 @@ type ScheduleStatus string
 type ScheduleRunStatus string
 
 const (
+	MissedRunPolicySkip    MissedRunPolicy = "skip"
+	MissedRunPolicyRunOnce MissedRunPolicy = "run_once"
+
 	FrequencyDaily   ScheduleFrequency = "daily"
 	FrequencyWeekly  ScheduleFrequency = "weekly"
 	FrequencyMonthly ScheduleFrequency = "monthly"
@@ -58,11 +62,13 @@ type Schedule struct {
 	TenantID   *string
 	FromWallet string
 	ToWallet   string
-	Asset      string
-	Amount     decimal.Decimal
-	Frequency  ScheduleFrequency
-	NextRunAt  time.Time
-	EndAt      *time.Time
+	Asset           string
+	Amount          decimal.Decimal
+	Frequency       ScheduleFrequency
+	Timezone        string
+	MissedRunPolicy MissedRunPolicy
+	NextRunAt       time.Time
+	EndAt           *time.Time
 	Status     ScheduleStatus
 	CreatedAt  time.Time
 	UpdatedAt  time.Time

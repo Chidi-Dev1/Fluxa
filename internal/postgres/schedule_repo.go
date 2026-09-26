@@ -21,7 +21,7 @@ func NewScheduleRepo(db DB) *ScheduleRepo {
 	return &ScheduleRepo{db: db}
 }
 
-const scheduleColumns = `id, tenant_id, from_wallet, to_wallet, asset, amount, frequency, next_run_at, end_at, status, created_at, updated_at`
+const scheduleColumns = `id, tenant_id, from_wallet, to_wallet, asset, amount, frequency, timezone, missed_run_policy, next_run_at, end_at, status, created_at, updated_at`
 
 func (r *ScheduleRepo) Create(ctx context.Context, s *domain.Schedule) error {
 	tID := tenant.IDFromContext(ctx)
@@ -30,9 +30,9 @@ func (r *ScheduleRepo) Create(ctx context.Context, s *domain.Schedule) error {
 	}
 	_, err := r.db.Exec(ctx,
 		`INSERT INTO schedules (`+scheduleColumns+`)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		s.ID, nullableUUID(s.TenantID), s.FromWallet, s.ToWallet, s.Asset, s.Amount.String(),
-		s.Frequency, s.NextRunAt, nullableTime(s.EndAt), s.Status, s.CreatedAt, s.UpdatedAt,
+		s.Frequency, s.Timezone, s.MissedRunPolicy, s.NextRunAt, nullableTime(s.EndAt), s.Status, s.CreatedAt, s.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert schedule: %w", err)
@@ -88,10 +88,10 @@ func (r *ScheduleRepo) List(ctx context.Context) ([]*domain.Schedule, error) {
 
 func (r *ScheduleRepo) Update(ctx context.Context, s *domain.Schedule) error {
 	tID := tenant.IDFromContext(ctx)
-	query := `UPDATE schedules SET amount = $2, frequency = $3, next_run_at = $4, end_at = $5, status = $6, updated_at = $7 WHERE id = $1`
-	args := []interface{}{s.ID, s.Amount.String(), s.Frequency, s.NextRunAt, nullableTime(s.EndAt), s.Status, s.UpdatedAt}
+	query := `UPDATE schedules SET amount = $2, frequency = $3, timezone = $4, missed_run_policy = $5, next_run_at = $6, end_at = $7, status = $8, updated_at = $9 WHERE id = $1`
+	args := []interface{}{s.ID, s.Amount.String(), s.Frequency, s.Timezone, s.MissedRunPolicy, s.NextRunAt, nullableTime(s.EndAt), s.Status, s.UpdatedAt}
 	if tID != "" {
-		query += ` AND tenant_id = $8`
+		query += ` AND tenant_id = $10`
 		args = append(args, tID)
 	}
 
@@ -135,7 +135,7 @@ func scanSchedule(row rowScanner) (*domain.Schedule, error) {
 	var amount string
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.FromWallet, &s.ToWallet, &s.Asset, &amount,
-		&s.Frequency, &s.NextRunAt, &s.EndAt, &s.Status, &s.CreatedAt, &s.UpdatedAt,
+		&s.Frequency, &s.Timezone, &s.MissedRunPolicy, &s.NextRunAt, &s.EndAt, &s.Status, &s.CreatedAt, &s.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
